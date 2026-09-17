@@ -1,0 +1,59 @@
+name: Automated Repository Maintenance
+
+on:
+  schedule:
+    # Approximately every 48 hours (02:30 UTC on even days).
+    # GitHub may delay scheduled runs; exact timing is not guaranteed.
+    - cron: "30 2 */2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Update maintenance metadata
+        run: |
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          path = Path("maintenance/status.json")
+          data = {}
+          if path.exists():
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+              except json.JSONDecodeError:
+                  data = {}
+          data["project"] = "ServerPulse"
+          data["maintenance"] = "automated"
+          data["workflow_version"] = 1
+          data["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          try:
+              data["last_run_number"] = int(data.get("last_run_number", 0)) + 1
+          except (TypeError, ValueError):
+              data["last_run_number"] = 1
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+          print(path.read_text(encoding="utf-8"))
+          PY
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- maintenance/status.json; then
+            echo "No maintenance changes; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add maintenance/status.json
+          git commit -m "chore: update automated maintenance status"
+          git push origin HEAD:master
